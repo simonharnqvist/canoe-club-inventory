@@ -3,10 +3,17 @@ from models import Inventory, Users, Bookings
 from sqlmodel import Session, select, SQLModel, create_engine
 import os
 import datetime
+from pathlib import Path
 
 app = FastAPI()
 
-POSTGRES_URI: str = os.getenv("POSTGRES_URI")  # type:ignore
+
+def get_secret(path: str) -> str:
+    return Path(path).read_text().strip()
+
+
+POSTGRES_PASSWORD = get_secret("/run/secrets/postgres_password")
+POSTGRES_URI = f"postgresql://{os.getenv('POSTGRES_USER')}:{POSTGRES_PASSWORD}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
 engine = create_engine(POSTGRES_URI)
 
 
