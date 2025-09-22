@@ -1,4 +1,7 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import RedirectResponse
+from jose import jwt
 from models import Inventory, Users, Bookings
 from sqlmodel import Session, select, SQLModel, create_engine
 import os
@@ -6,15 +9,36 @@ import datetime
 from pathlib import Path
 
 app = FastAPI()
+security = HTTPBearer()
 
 
 def get_secret(path: str) -> str:
     return Path(path).read_text().strip()
 
 
+KEYCLOAK_PUBLIC_KEY = "5TIliH0iyzf1Efc_Zjq297ZZzELM8Q_Ty7nZLba2Vv0"
+KEYCLOAK_ISSUER = "http://keycloak:8080/realms/testing"
+ALGORITHM = "RS256"
+
 POSTGRES_PASSWORD = get_secret("/run/secrets/postgres_password")
 POSTGRES_URI = f"postgresql://{os.getenv('POSTGRES_USER')}:{POSTGRES_PASSWORD}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
 engine = create_engine(POSTGRES_URI)
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(
+            token, KEYCLOAK_PUBLIC_KEY, algorithms=[ALGORITHM], issuer=KEYCLOAK_ISSUER
+        )
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def require_admin(user: dict = Depends(get_current_user)):
+    groups = user.get("groups", [])
+    if "admin" not in groups:
+        raise HTTPException(status_code=403, detail="Admin access only")
 
 
 @app.on_event("startup")
@@ -22,7 +46,18 @@ def on_startup():
     SQLModel.metadata.create_all(engine)
 
 
-@app.post("/inventory", response_model=Inventory)
+@app.get("/")
+def login():
+    return RedirectResponse(
+        url="http://localhost:8080/realms/testing/protocol/openid-connect/auth"
+        "?client_id=inventory-app"
+        "&response_type=code"
+        "&scope=openid"
+        "&redirect_uri=http://localhost:8000/callback"
+    )
+
+
+@app.post("/inventory", response_model=Inventory, dependencies=[Depends(require_admin)])
 def create_item(item: Inventory):
     with Session(engine) as session:
         session.add(item)
@@ -31,7 +66,9 @@ def create_item(item: Inventory):
         return item
 
 
-@app.put("/inventory/{id}", response_model=Inventory)
+@app.put(
+    "/inventory/{id}", response_model=Inventory, dependencies=[Depends(require_admin)]
+)
 def update_item(id: int, updated_item: Inventory):
     with Session(engine) as session:
         item = session.get(Inventory, id)
@@ -44,7 +81,7 @@ def update_item(id: int, updated_item: Inventory):
         return item
 
 
-@app.delete("/inventory/{id}")
+@app.delete("/inventory/{id}", dependencies=[Depends(require_admin)])
 def delete_item(id: int):
     with Session(engine) as session:
         item = session.get(Inventory, id)
@@ -55,7 +92,9 @@ def delete_item(id: int):
         return {"ok": True}
 
 
-@app.get("/inventory", response_model=list[Inventory])
+@app.get(
+    "/inventory", response_model=list[Inventory], dependencies=[Depends(require_admin)]
+)
 def list_items(
     id: int | None = None,
     category: str | None = None,
@@ -67,46 +106,9 @@ def list_items(
         return session.exec(select(Inventory)).all()
 
 
-@app.post("/users", response_model=Users)
-def create_user(user: Users):
-    with Session(engine) as session:
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        return user
-
-
-@app.put("/users/{id}", response_model=Users)
-def update_user(id: int, updated_user: Users):
-    with Session(engine) as session:
-        user = session.get(Users, id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        for key, value in updated_user.dict(exclude_unset=True).items():
-            setattr(user, key, value)
-        session.commit()
-        session.refresh(user)
-        return user
-
-
-@app.delete("/users/{id}")
-def delete_user(id: int):
-    with Session(engine) as session:
-        user = session.get(Users, id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        session.delete(user)
-        session.commit()
-        return {"ok": True}
-
-
-@app.get("/users", response_model=list[Users])
-def list_users():
-    with Session(engine) as session:
-        return session.exec(select(Users)).all()
-
-
-@app.post("/bookings", response_model=Bookings)
+@app.post(
+    "/bookings", response_model=Bookings, dependencies=[Depends(get_current_user)]
+)
 def create_booking(booking: Bookings):
     with Session(engine) as session:
         session.add(booking)
@@ -115,7 +117,9 @@ def create_booking(booking: Bookings):
         return booking
 
 
-@app.put("/bookings/{id}", response_model=Bookings)
+@app.put(
+    "/bookings/{id}", response_model=Bookings, dependencies=[Depends(get_current_user)]
+)
 def update_booking(id: int, updated_booking: Bookings):
     with Session(engine) as session:
         booking = session.get(Bookings, id)
@@ -128,7 +132,7 @@ def update_booking(id: int, updated_booking: Bookings):
         return booking
 
 
-@app.delete("/bookings/{id}")
+@app.delete("/bookings/{id}", dependencies=[Depends(get_current_user)])
 def delete_booking(id: int):
     with Session(engine) as session:
         booking = session.get(Bookings, id)
@@ -139,7 +143,9 @@ def delete_booking(id: int):
         return {"ok": True}
 
 
-@app.get("/bookings", response_model=list[Bookings])
+@app.get(
+    "/bookings", response_model=list[Bookings], dependencies=[Depends(get_current_user)]
+)
 def list_bookings(
     id: int | None = None,
     item_id: int | None = None,
