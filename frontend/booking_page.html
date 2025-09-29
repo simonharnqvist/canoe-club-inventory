@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Book {{ item.name }}</title>
+</head>
+<body>
+  <h1>Create Booking for {{ item.name }}</h1>
+
+  <form action="localhost:8000/bookings/{{ item.id }}" method="post">
+    <label for="start_time">Start time</label>
+    <input type="datetime-local" name="start_time" required>
+    <br><br>
+    <label for="end_time">End time</label>
+    <input type="datetime-local" name="end_time" required>
+    <br><br>
+    <button type="submit">Submit Booking</button>
+  </form>
+
+  <p><a href="/">← Back to Items</a></p>
+</body>
+</html>

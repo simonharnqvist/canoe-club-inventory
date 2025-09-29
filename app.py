@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from jose import jwt
 from models import Inventory, Booking
 from sqlmodel import Session, select, SQLModel, create_engine
@@ -10,6 +11,39 @@ from pathlib import Path
 
 app = FastAPI()
 security = HTTPBearer()
+
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "frontend"
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+## mock data
+ITEMS = [
+    {
+        "id": 1,
+        "reference": "GP15",
+        "category": "river kayak",
+        "craft_type": "kayak",
+        "size": "M",
+        "num_seats": 1,
+    },
+    {
+        "id": 2,
+        "reference": "polo2",
+        "category": "polo kayak.",
+        "craft_type": "kayak",
+        "size": "M",
+        "num_seats": 1,
+    },
+    {
+        "id": 3,
+        "reference": "sprint4",
+        "category": "sprint kayak",
+        "craft_type": "kayak",
+        "size": "M",
+        "num_seats": 1,
+    },
+]
 
 
 def get_secret(path: str) -> str:
@@ -54,6 +88,13 @@ def login():
         "&response_type=code"
         "&scope=openid"
         "&redirect_uri=http://localhost:8000/callback"
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request):
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "items": ITEMS}
     )
 
 
