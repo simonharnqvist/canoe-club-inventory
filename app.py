@@ -87,11 +87,13 @@ def login():
         "?client_id=inventory-app"
         "&response_type=code"
         "&scope=openid"
-        "&redirect_uri=http://localhost:8000/callback"
+        "&redirect_uri=http://localhost:8000/dashboard"
     )
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.get(
+    "/dashboard", response_class=HTMLResponse, dependencies=[Depends(get_current_user)]
+)
 def dashboard(request: Request):
     return templates.TemplateResponse(
         "index.html", {"request": request, "items": ITEMS}
