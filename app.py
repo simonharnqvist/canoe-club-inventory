@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse
 from jose import jwt
-from models import Inventory, Users, Bookings
+from models import Inventory, Booking
 from sqlmodel import Session, select, SQLModel, create_engine
 import os
 import datetime
@@ -106,11 +106,33 @@ def list_items(
         return session.exec(select(Inventory)).all()
 
 
-@app.post(
-    "/bookings", response_model=Bookings, dependencies=[Depends(get_current_user)]
-)
-def create_booking(booking: Bookings):
+def check_if_item_available(
+    session: Session,
+    item_id: int,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+):
+
+    overlapping_bookings = session.exec(
+        select(Booking)
+        .where(Booking.item_id == item_id)
+        .where(Booking.start_time <= end_time)
+        .where(Booking.end_time >= start_time)
+    ).all()
+    if len(overlapping_bookings) > 0:
+        if overlapping_bookings:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Item is already booked for the requested time.",
+            )
+
+
+@app.post("/bookings", response_model=Booking, dependencies=[Depends(get_current_user)])
+def create_booking(booking: Booking) -> Booking:
     with Session(engine) as session:
+        check_if_item_available(
+            session, booking.item_id, booking.start_time, booking.end_time
+        )
         session.add(booking)
         session.commit()
         session.refresh(booking)
@@ -118,11 +140,11 @@ def create_booking(booking: Bookings):
 
 
 @app.put(
-    "/bookings/{id}", response_model=Bookings, dependencies=[Depends(get_current_user)]
+    "/bookings/{id}", response_model=Booking, dependencies=[Depends(get_current_user)]
 )
-def update_booking(id: int, updated_booking: Bookings):
+def update_booking(id: int, updated_booking: Booking):
     with Session(engine) as session:
-        booking = session.get(Bookings, id)
+        booking = session.get(Booking, id)
         if not booking:
             raise HTTPException(status_code=404, detail="Booking not found")
         for key, value in updated_booking.dict(exclude_unset=True).items():
@@ -135,7 +157,7 @@ def update_booking(id: int, updated_booking: Bookings):
 @app.delete("/bookings/{id}", dependencies=[Depends(get_current_user)])
 def delete_booking(id: int):
     with Session(engine) as session:
-        booking = session.get(Bookings, id)
+        booking = session.get(Booking, id)
         if not booking:
             raise HTTPException(status_code=404, detail="Booking not found")
         session.delete(booking)
@@ -144,7 +166,7 @@ def delete_booking(id: int):
 
 
 @app.get(
-    "/bookings", response_model=list[Bookings], dependencies=[Depends(get_current_user)]
+    "/bookings", response_model=list[Booking], dependencies=[Depends(get_current_user)]
 )
 def list_bookings(
     id: int | None = None,
@@ -154,4 +176,4 @@ def list_bookings(
     end_time: datetime.datetime | None = None,
 ):
     with Session(engine) as session:
-        return session.exec(select(Bookings)).all()
+        return session.exec(select(Booking)).all()

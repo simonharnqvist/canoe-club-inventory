@@ -2,7 +2,7 @@ from sqlmodel import SQLModel, Field
 import datetime
 
 
-class Users(SQLModel, table=True):
+class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     first_name: str
     surname: str
@@ -19,7 +19,7 @@ class Inventory(SQLModel, table=True):
     num_seats: int | None = None
 
 
-class Bookings(SQLModel, table=True):
+class Booking(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int
     item_id: int
