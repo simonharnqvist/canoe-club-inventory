@@ -1,4 +1,5 @@
 fastapi
+fastapi-throttling
 sqlmodel
 uvicorn[standard]
 psycopg2-binary

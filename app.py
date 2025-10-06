@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi_throttling import ThrottlingMiddleware
 from fastapi.templating import Jinja2Templates
 from jose import jwt
+from jose.exceptions import JWTError
 from models import Inventory, Booking
 from sqlmodel import Session, select, SQLModel, create_engine
 import os
@@ -10,48 +12,23 @@ import datetime
 from pathlib import Path
 
 app = FastAPI()
+app.add_middleware(ThrottlingMiddleware, limit=100, window=60)
 security = HTTPBearer()
+APP_PORT = "8000"
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "frontend"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-## mock data
-ITEMS = [
-    {
-        "id": 1,
-        "reference": "GP15",
-        "category": "river kayak",
-        "craft_type": "kayak",
-        "size": "M",
-        "num_seats": 1,
-    },
-    {
-        "id": 2,
-        "reference": "polo2",
-        "category": "polo kayak.",
-        "craft_type": "kayak",
-        "size": "M",
-        "num_seats": 1,
-    },
-    {
-        "id": 3,
-        "reference": "sprint4",
-        "category": "sprint kayak",
-        "craft_type": "kayak",
-        "size": "M",
-        "num_seats": 1,
-    },
-]
-
 
 def get_secret(path: str) -> str:
     return Path(path).read_text().strip()
 
 
+KEYCLOAK_PORT = "8080"
 KEYCLOAK_PUBLIC_KEY = "5TIliH0iyzf1Efc_Zjq297ZZzELM8Q_Ty7nZLba2Vv0"
-KEYCLOAK_ISSUER = "http://keycloak:8080/realms/testing"
+KEYCLOAK_ISSUER = f"http://keycloak:{KEYCLOAK_PORT}/realms/testing"
 ALGORITHM = "RS256"
 
 POSTGRES_PASSWORD = get_secret("/run/secrets/postgres_password")
@@ -65,8 +42,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         payload = jwt.decode(
             token, KEYCLOAK_PUBLIC_KEY, algorithms=[ALGORITHM], issuer=KEYCLOAK_ISSUER
         )
-    except jwt.JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token. Are you logged in?")
 
 
 def require_admin(user: dict = Depends(get_current_user)):
@@ -83,11 +60,11 @@ def on_startup():
 @app.get("/")
 def login():
     return RedirectResponse(
-        url="http://localhost:8080/realms/testing/protocol/openid-connect/auth"
+        url=f"http://localhost:{KEYCLOAK_PORT}/realms/testing/protocol/openid-connect/auth"
         "?client_id=inventory-app"
         "&response_type=code"
         "&scope=openid"
-        "&redirect_uri=http://localhost:8000/dashboard"
+        f"&redirect_uri=http://localhost:{APP_PORT}/dashboard"
     )
 
 
@@ -95,9 +72,7 @@ def login():
     "/dashboard", response_class=HTMLResponse, dependencies=[Depends(get_current_user)]
 )
 def dashboard(request: Request):
-    return templates.TemplateResponse(
-        "index.html", {"request": request, "items": ITEMS}
-    )
+    return templates.TemplateResponse("index.html", {"request": request, "items": {}})
 
 
 @app.post("/inventory", response_model=Inventory, dependencies=[Depends(require_admin)])
