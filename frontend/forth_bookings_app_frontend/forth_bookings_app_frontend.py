@@ -1,8 +1,12 @@
 import reflex as rx
 from dataclasses import dataclass
 from datetime import datetime
+import httpx
+import os
 
 from rxconfig import config
+
+BACKEND_URL = os.getenv("BACKEND_URI")
 
 
 @dataclass
@@ -19,10 +23,62 @@ class Booking:
 
 class State(rx.State):
 
-    bookings: list[Booking]
+    token: str | None = None
+    bookings: list[Booking] = []
+    backend_url = BACKEND_URL
+    error: str | None = None
 
-    def add_booking(self, form_data: dict):
-        self.bookings.append(Booking(**form_data))
+    def start_login(self):
+        rx.redirect(f"{self.backend_url}/login")
+
+    async def handle_callback(self, code: str):
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{BACKEND_URL}/callback?code={code}")
+                response.raise_for_status()
+                self.token = response.json().get("access_token")
+        except Exception as e:
+            self.error = str(e)
+
+    async def get_bookings(self):
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(self.backend_url)
+                response.raise_for_status()
+                self.bookings = [Booking(**b) for b in response.json()]
+            except Exception as e:
+                print(f"Failed to retrieve bookings: {e}")
+                self.bookings = []
+
+    async def add_booking(self, form_data: dict):
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(self.backend_url, json=form_data)
+                response.raise_for_status()
+                await self.get_bookings()
+            except Exception as e:
+                print(f"Failed to add booking: {e}")
+
+    async def edit_booking(self, booking_id: int, form_data: dict):
+        url = f"{self.backend_url}/{booking_id}"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.put(url, json=form_data)
+                response.raise_for_status()
+                await self.get_bookings()
+            except Exception as e:
+                print(f"Failed to update booking: {e}")
+
+    async def delete_booking(self, booking_id: int):
+        url = f"{self.backend_url}/{booking_id}"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.delete(url)
+                response.raise_for_status()
+                await self.get_bookings()
+            except Exception as e:
+                print(f"Failed to delete booking: {e}")
 
 
 def show_booking(booking: Booking):
@@ -35,6 +91,21 @@ def show_booking(booking: Booking):
         rx.table.cell(booking.booker_name),
         rx.table.cell(booking.booker_email),
         rx.table.cell(booking.payment),
+    )
+
+
+def login_button():
+    return rx.button("Login", on_click=State.start_login)
+
+
+def callback_page(code: str | None = None):
+    if code:
+        # Trigger the mutation directly from server-side
+        State.handle_callback(code)
+
+    return rx.fragment(
+        rx.text("Handling login callback..."),
+        rx.cond(State.error, rx.text(State.error)),
     )
 
 
@@ -95,6 +166,7 @@ def add_booking_button() -> rx.Component:
 
 def index() -> rx.Component:
     return rx.vstack(
+        rx.button("Login", on_click=State.start_login),
         add_booking_button(),
         rx.table.root(
             rx.table.header(

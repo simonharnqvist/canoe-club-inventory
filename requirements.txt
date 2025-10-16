@@ -1,8 +1,0 @@
-fastapi
-fastapi-throttling
-sqlmodel
-uvicorn[standard]
-psycopg2-binary
-python-dotenv
-python-jose
-jinja2
