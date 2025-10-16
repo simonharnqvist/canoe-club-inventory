@@ -1,7 +1,7 @@
 services:
-  app:
-    build: .
-    container_name: inventory_app
+  backend:
+    build: ./backend
+    container_name: inventory_backend
     ports:
       - "8000:8000"
     env_file:
@@ -12,6 +12,14 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     volumes:
       - ./secrets/postgres_password.txt:/run/secrets/postgres_password:ro
+
+  frontend:
+    build: ./frontend
+    container-name: inventory_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
 
   db:
     image: postgres:15
