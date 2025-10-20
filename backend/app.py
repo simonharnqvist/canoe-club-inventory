@@ -3,20 +3,21 @@ import datetime
 import urllib.parse
 
 import httpx
-from fastapi import FastAPI, HTTPException, Depends, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Cookie
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi_throttling import ThrottlingMiddleware
 from jose import jwt
 from jose.exceptions import JWTError
 from sqlmodel import Session, select, SQLModel, create_engine
+from urllib.parse import urljoin
+import logging
 
 from models import Inventory, Booking
 
-
 # --- Environment Config ---
 ENGINE = create_engine(os.getenv("POSTGRES_URI"))
-APP_PORT = os.getenv("APP_PORT", "8000")
+APP_URI = os.getenv("BACKEND_URI")
+FRONTEND_URI = os.getenv("FRONTEND_URI")
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URI")
 KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM")
@@ -25,9 +26,7 @@ KEYCLOAK_CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET")
 KEYCLOAK_PUBLIC_KEY = os.getenv("KEYCLOAK_PUBLIC_KEY")
 KEYCLOAK_ALGORITHM = os.getenv("KEYCLOAK_ALGORITHM", "RS256")
 KEYCLOAK_ISSUER = os.getenv("KEYCLOAK_ISSUER")
-FRONTEND_URI = os.getenv("FRONTEND_URI")
 
-# Derived Keycloak URLs
 KEYCLOAK_AUTH_URI = (
     f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth"
 )
@@ -35,23 +34,19 @@ KEYCLOAK_TOKEN_URI = (
     f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
 )
 
+logger = logging.getLogger("uvicorn.error")
 
 # --- FastAPI Init ---
 app = FastAPI()
 app.add_middleware(ThrottlingMiddleware, limit=100, window=60)
-security = HTTPBearer()
 
 
 @app.middleware("http")
 async def bypass_reflex_routes(request: Request, call_next):
-    # Let Reflex internal endpoints bypass validation
-    path = request.url.path
-    # Reflex uses _event for WebSocket events
+    # Allow Reflex system routes through (no auth)
     internal_prefixes = ["/_event", "/_rx", "/static", "/favicon.ico", "/"]
-    # You might want to adjust these based on your setup
-    for prefix in internal_prefixes:
-        if path.startswith(prefix):
-            return await call_next(request)
+    if any(request.url.path.startswith(p) for p in internal_prefixes):
+        return await call_next(request)
     return await call_next(request)
 
 
@@ -60,11 +55,10 @@ def on_startup():
     SQLModel.metadata.create_all(ENGINE)
 
 
-# --- Authentication & Authorization ---
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> dict:
-    token = credentials.credentials
+# --- Auth ---
+def get_current_user(token: str = Cookie(None)) -> dict:
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(
             token,
@@ -74,28 +68,22 @@ def get_current_user(
         )
         return payload
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token. Are you logged in?")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 def require_admin(user: dict = Depends(get_current_user)):
-    groups = user.get("groups", [])
-    if "admin" not in groups:
+    if "admin" not in user.get("groups", []):
         raise HTTPException(status_code=403, detail="Admin access only")
 
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
-
-
-# --- Keycloak Login Flow ---
+# --- Auth Endpoints ---
 @app.get("/login")
 def login():
     params = {
         "client_id": KEYCLOAK_CLIENT_ID,
         "response_type": "code",
         "scope": "openid",
-        "redirect_uri": FRONTEND_URI,
+        "redirect_uri": urljoin(APP_URI, "/callback"),
     }
     auth_url = f"{KEYCLOAK_AUTH_URI}?{urllib.parse.urlencode(params)}"
     return RedirectResponse(url=auth_url)
@@ -103,10 +91,17 @@ def login():
 
 @app.get("/callback")
 async def callback(request: Request):
+    """
+    OAuth2 callback endpoint to exchange authorization code for access token.
+    """
     code = request.query_params.get("code")
     if not code:
-        return JSONResponse({"error": "Missing code"}, status_code=400)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing authorization code in callback.",
+        )
 
+    # Prepare token request payload
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -118,20 +113,63 @@ async def callback(request: Request):
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     async with httpx.AsyncClient() as client:
-        response = await client.post(KEYCLOAK_TOKEN_URI, data=data, headers=headers)
+        try:
+            response = await client.post(
+                KEYCLOAK_TOKEN_URI, data=data, headers=headers, timeout=10.0
+            )
+            response.raise_for_status()
+        except httpx.RequestError as e:
+            logger.error(f"Network error while requesting token from Keycloak: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to connect to Keycloak for token exchange.",
+            )
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Keycloak responded with error status {e.response.status_code}: {e.response.text}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Keycloak token endpoint returned error: {e.response.text}",
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during token exchange: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unexpected error during token exchange.",
+            )
 
-    if response.status_code != 200:
-        return JSONResponse(
-            {"error": "Failed to exchange token", "details": response.text},
-            status_code=400,
+    token_response = response.json()
+
+    access_token = token_response.get("access_token")
+    if not access_token:
+        logger.error(f"No access token found in Keycloak response: {token_response}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No access token returned from Keycloak.",
         )
 
-    access_token = response.json().get("access_token")
-    redirect_url = f"{FRONTEND_URI}?token={access_token}"
-    return RedirectResponse(redirect_url)
+    # Optionally: store token in a secure way, create session, etc.
+
+    return {
+        "access_token": access_token,
+        "token_type": token_response.get("token_type"),
+        "expires_in": token_response.get("expires_in"),
+        "refresh_token": token_response.get("refresh_token"),
+        # Add other fields as needed
+    }
 
 
-# --- Inventory Routes ---
+@app.get("/me")
+def get_me(user: dict = Depends(get_current_user)):
+    return {
+        "username": user.get("preferred_username"),
+        "email": user.get("email"),
+        "groups": user.get("groups", []),
+    }
+
+
+# --- Inventory Management (Admin Only) ---
 @app.post("/inventory", response_model=Inventory, dependencies=[Depends(require_admin)])
 def create_item(item: Inventory):
     with Session(ENGINE) as session:
@@ -170,29 +208,20 @@ def delete_item(id: int):
 @app.get(
     "/inventory", response_model=list[Inventory], dependencies=[Depends(require_admin)]
 )
-def list_items(
-    id: int | None = None,
-    category: str | None = None,
-    craft_type: str | None = None,
-    size: str | None = None,
-    num_seats: int | None = None,
-):
+def list_items():
     with Session(ENGINE) as session:
         return session.exec(select(Inventory)).all()
 
 
-# --- Bookings Logic ---
+# --- Booking Logic ---
 def check_if_item_available(
-    session: Session,
-    item_id: int,
-    start_time: datetime.datetime,
-    end_time: datetime.datetime,
+    session: Session, item_id: int, start: datetime.datetime, end: datetime.datetime
 ):
     overlapping = session.exec(
         select(Booking)
         .where(Booking.item_id == item_id)
-        .where(Booking.start_time <= end_time)
-        .where(Booking.end_time >= start_time)
+        .where(Booking.start_time <= end)
+        .where(Booking.end_time >= start)
     ).all()
 
     if overlapping:
@@ -244,12 +273,6 @@ def delete_booking(id: int):
 @app.get(
     "/bookings", response_model=list[Booking], dependencies=[Depends(get_current_user)]
 )
-def list_bookings(
-    id: int | None = None,
-    item_id: int | None = None,
-    user_id: int | None = None,
-    start_time: datetime.datetime | None = None,
-    end_time: datetime.datetime | None = None,
-):
+def list_bookings():
     with Session(ENGINE) as session:
         return session.exec(select(Booking)).all()
