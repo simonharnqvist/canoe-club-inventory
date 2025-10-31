@@ -11,24 +11,10 @@ services:
     environment:
       POSTGRES_URI: ${POSTGRES_URI}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      KEYCLOAK_URI: ${KEYCLOAK_URI}
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
-      KEYCLOAK_PUBLIC_KEY: ${KEYCLOAK_PUBLIC_KEY}
-      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
-      ALGORITHM: ${ALGORITHM}
       FRONTEND_URI: ${FRONTEND_URI}
-
-  frontend:
-    build: ./frontend
-    container_name: inventory_frontend
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
-    env_file:
-      - .env 
-    environment:
-      BACKEND_URI: ${BACKEND_URI}
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
 
   db:
     image: postgres:15
@@ -43,37 +29,18 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  keycloak-db:
-    image: postgres:15
-    container_name: keycloak_postgres
-    restart: always
-    env_file:
-      - .env
-    environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: ${KEYCLOAK_DB_USER}
-      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
-    volumes:
-      - keycloak_data:/var/lib/postgresql/data
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0.1
-    container_name: keycloak
-    command: start-dev
+  frontend:
+    build: ./frontend
+    container_name: inventory_frontend
     ports:
-      - "8080:8080"
+      - "3000:3000"
     depends_on:
-      - keycloak-db
+      - backend
     env_file:
-      - .env
+      - .env 
     environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
-      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      BACKEND_URI: ${BACKEND_URI}
+
 
 volumes:
   postgres_data:
-  keycloak_data:

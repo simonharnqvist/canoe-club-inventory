@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 import datetime
-from .app import app, get_current_user, require_admin
+from .app_old import app, get_current_user, require_admin
 
 client = TestClient(app)
 

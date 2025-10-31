@@ -1,0 +1,11 @@
+fastapi
+fastapi-throttling
+sqlmodel
+uvicorn[standard]
+psycopg2-binary
+python-dotenv
+httpx
+pyjwt
+python-multipart
+cryptography
+pwdlib[argon2]

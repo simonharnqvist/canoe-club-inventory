@@ -28,16 +28,20 @@ class State(rx.State):
     bookings: list[Booking] = []
     user: dict | None = None
     error: str | None = None
+    cookies = {"token": rx.Cookie("token")}
 
     async def on_load(self):
         await self.get_current_user()
         if self.is_authenticated:
             await self.get_bookings()
+        else:
+            return login_redirect()
 
     async def get_current_user(self):
+        assert self.cookies is not None
         async with httpx.AsyncClient(cookies=self.cookies) as client:
             try:
-                response = await client.get(f"{BACKEND_URL}/me")
+                response = await client.get(f"{BACKEND_URL}/me", cookies=self.cookies)
                 response.raise_for_status()
                 self.user = response.json()
                 self.is_authenticated = True
@@ -101,7 +105,7 @@ def show_booking(booking: Booking):
 
 def login_redirect():
     return rx.fragment(
-        rx.script(f"window.location.href = '{LOGIN_URL}';"),
+        rx.script(f"window.location.href = '/';"),
         rx.link("Click here if not redirected", href=LOGIN_URL),
     )
 
@@ -159,6 +163,17 @@ def add_booking_button():
 
 
 # --- Pages ---
+def error_page(error_message: str):
+    return rx.center(
+        rx.vstack(
+            rx.heading("Authentication Error", size="3"),
+            rx.text(error_message),
+            rx.link("Go to Login", href=LOGIN_URL),
+        ),
+        height="100vh",
+    )
+
+
 def index() -> rx.Component:
     return rx.box(
         rx.cond(
@@ -187,7 +202,7 @@ def index() -> rx.Component:
                     width="100%",
                 ),
             ),
-            login_redirect(),
+            error_page("Not logged in"),
         )
     )
 
