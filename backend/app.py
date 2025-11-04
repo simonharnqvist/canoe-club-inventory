@@ -9,9 +9,8 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, select
 import os
 from sqlmodel import SQLModel
-from contextlib import asynccontextmanager
 
-from models import (
+from .models import (
     User,
     Inventory,
     Booking,
@@ -23,7 +22,7 @@ from models import (
     BookingCreate,
     BookingRead,
 )
-from database import engine, get_session
+from .database import engine, get_session
 
 ENGINE = engine
 
@@ -46,8 +45,7 @@ password_hash = PasswordHash.recommended()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def lifespan(app: FastAPI):
     SQLModel.metadata.create_all(engine)
     yield
 
@@ -70,6 +68,8 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
+    if not SECRET_KEY or SECRET_KEY == "":
+        raise ValueError("SECRET_KEY is missing")
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -88,7 +88,7 @@ def authenticate_user(session: Session, username: str, password: str):
     return user
 
 
-async def get_current_user(
+def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     session: Session = Depends(get_session),
 ):
@@ -130,7 +130,7 @@ def register_user(user: UserCreate, session: Session = Depends(get_session)):
 
 
 @app.post("/token")
-async def login_for_access_token(
+def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: Session = Depends(get_session),
 ) -> Token:
@@ -149,7 +149,7 @@ async def login_for_access_token(
 
 
 @app.get("/users/me", response_model=UserRead)
-async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
     return current_user
 
 
@@ -257,10 +257,19 @@ def update_booking(
 
 
 @app.delete("/bookings/{id}", dependencies=[Depends(get_current_user)])
-def delete_booking(id: int, session: Session = Depends(get_session)):
+def delete_booking(
+    id: int,
+    session: Session = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
     db_booking = session.get(Booking, id)
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    if db_booking.user_id != current_user.id:
+        raise HTTPException(
+            status_code=401, detail="Not authorised to delete someone else's booking"
+        )
     session.delete(db_booking)
     session.commit()
     return {"ok": True}

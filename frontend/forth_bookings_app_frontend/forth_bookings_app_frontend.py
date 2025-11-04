@@ -4,6 +4,7 @@ from datetime import datetime
 import httpx
 import os
 from urllib.parse import urljoin
+import requests
 
 from rxconfig import config
 
@@ -174,6 +175,42 @@ def error_page(error_message: str):
     )
 
 
+def handle_login():
+    global username, password, token
+    # Send credentials to FastAPI /token endpoint
+    response = requests.post(
+        "http://localhost:8000/token", data={"username": username, "password": password}
+    )
+    if response.status_code == 200:
+        token = response.json().get("access_token")
+        print(f"Logged in successfully! Token: {token}")
+    else:
+        print("Login failed!")
+
+
+def login_page() -> rx.Component:
+    global username, password
+
+    def on_username_change(value):
+        nonlocal username
+        username = value
+
+    def on_password_change(value):
+        nonlocal password
+        password = value
+
+    return rx.box(
+        children=[
+            rx.text("Login to your account"),
+            rx.input(placeholder="Username", on_change=on_username_change),
+            rx.input(
+                placeholder="Password", type="password", on_change=on_password_change
+            ),
+            rx.button("Login", on_click=handle_login),
+        ]
+    )
+
+
 def index() -> rx.Component:
     return rx.box(
         rx.cond(
@@ -209,4 +246,5 @@ def index() -> rx.Component:
 
 # --- App Setup ---
 app = rx.App()
-app.add_page(index)
+app.add_page(login_page)
+# app.add_page(index)

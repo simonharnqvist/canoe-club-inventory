@@ -29,17 +29,17 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  frontend:
-    build: ./frontend
-    container_name: inventory_frontend
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
-    env_file:
-      - .env 
-    environment:
-      BACKEND_URI: ${BACKEND_URI}
+  # frontend:
+  #   build: ./frontend
+  #   container_name: inventory_frontend
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - backend
+  #   env_file:
+  #     - .env 
+  #   environment:
+  #     BACKEND_URI: ${BACKEND_URI}
 
 
 volumes:

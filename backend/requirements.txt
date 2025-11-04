@@ -9,3 +9,4 @@ pyjwt
 python-multipart
 cryptography
 pwdlib[argon2]
+aiosqlite
