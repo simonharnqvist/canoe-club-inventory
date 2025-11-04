@@ -88,6 +88,13 @@ def authenticate_user(session: Session, username: str, password: str):
     return user
 
 
+def is_admin(user: User):
+    if not user.is_admin or not isinstance(user.is_admin, bool):
+        raise HTTPException(status_code=401, detail="Admin only")
+    else:
+        return user.is_admin
+
+
 def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     session: Session = Depends(get_session),
@@ -153,13 +160,19 @@ def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
     return current_user
 
 
-# --- Inventory Management (Admin Only) ---
+# --- Inventory Management ---
 @app.post(
     "/inventory",
     response_model=InventoryRead,
     dependencies=[Depends(get_current_user)],
 )
-def create_item(item: InventoryCreate, session: Session = Depends(get_session)):
+def create_item(
+    item: InventoryCreate,
+    session: Session = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+
+    is_admin(current_user)
     db_item = Inventory(**item.model_dump())
     session.add(db_item)
     session.commit()
@@ -173,8 +186,12 @@ def create_item(item: InventoryCreate, session: Session = Depends(get_session)):
     dependencies=[Depends(get_current_user)],
 )
 def update_item(
-    id: int, updated_item: InventoryCreate, session: Session = Depends(get_session)
+    id: int,
+    updated_item: InventoryCreate,
+    session: Session = Depends(get_session),
+    current_user=Depends(get_current_user),
 ):
+    is_admin(current_user)
     item = session.get(Inventory, id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -186,7 +203,12 @@ def update_item(
 
 
 @app.delete("/inventory/{id}", dependencies=[Depends(get_current_user)])
-def delete_item(id: int, session: Session = Depends(get_session)):
+def delete_item(
+    id: int,
+    session: Session = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+    is_admin(current_user)
     item = session.get(Inventory, id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -244,16 +266,24 @@ def create_booking(booking: BookingCreate, session: Session = Depends(get_sessio
     dependencies=[Depends(get_current_user)],
 )
 def update_booking(
-    id: int, updated_booking: BookingCreate, session: Session = Depends(get_session)
+    id: int,
+    updated_booking: BookingCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    booking = session.get(Booking, id)
-    if not booking:
+    db_booking = session.get(Booking, id)
+    if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    if db_booking.user_id != current_user.id and not is_admin(current_user):
+        raise HTTPException(
+            status_code=401, detail="Not authorised to change someone else's booking"
+        )
     for key, value in updated_booking.model_dump(exclude_unset=True).items():
-        setattr(booking, key, value)
+        setattr(db_booking, key, value)
     session.commit()
-    session.refresh(booking)
-    return booking
+    session.refresh(db_booking)
+    return db_booking
 
 
 @app.delete("/bookings/{id}", dependencies=[Depends(get_current_user)])
@@ -266,7 +296,7 @@ def delete_booking(
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    if db_booking.user_id != current_user.id:
+    if db_booking.user_id != current_user.id and not is_admin(current_user):
         raise HTTPException(
             status_code=401, detail="Not authorised to delete someone else's booking"
         )

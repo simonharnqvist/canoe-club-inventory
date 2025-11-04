@@ -41,7 +41,13 @@ def create_users(reset_database):
             email="jane@doe.com",
             hashed_password=get_password_hash("janespass"),
         )
-        session.add_all([user1, user2])
+        admin = User(
+            username="admin",
+            email="admin@admin.com",
+            hashed_password=get_password_hash("adminpass"),
+            is_admin=True,
+        )
+        session.add_all([user1, user2, admin])
         session.commit()
 
 
@@ -56,6 +62,10 @@ def mock_user():
 
 def mock_other_user():
     return get_user_by_username("janedoe")
+
+
+def mock_admin():
+    return get_user_by_username("admin")
 
 
 # @pytest.fixture(autouse=True)
@@ -112,16 +122,16 @@ def test_post_inventory_not_logged_in():
     assert response.status_code == 401
 
 
-@pytest.mark.skip("RBAC not yet implemented")
 def test_post_inventory_regular_user():
     app.dependency_overrides[get_current_user] = mock_user
-    response = client.get("/inventory")
+    response = client.post(
+        "/inventory/", json={"reference": "Test Ref", "category": "craft", "size": "L"}
+    )
     assert response.status_code == 401
 
 
-@pytest.mark.skip("RBAC not yet implemented")
 def test_post_inventory_admin():
-    app.dependency_overrides[require_admin] = mock_admin
+    app.dependency_overrides[get_current_user] = mock_admin
     response = client.post(
         "/inventory/", json={"reference": "Test Ref", "category": "craft", "size": "L"}
     )
@@ -142,7 +152,6 @@ def test_put_inventory_not_logged_in():
     assert response.status_code == 403 or response.status_code == 401
 
 
-@pytest.mark.skip("RBAC not yet implemented")
 def test_put_inventory_regular_user():
     app.dependency_overrides[get_current_user] = mock_user
 
@@ -152,9 +161,8 @@ def test_put_inventory_regular_user():
     assert response.status_code == 401
 
 
-@pytest.mark.skip("RBAC not yet implemented")
 def test_put_inventory_admin():
-    app.dependency_overrides[require_admin] = mock_admin
+    app.dependency_overrides[get_current_user] = mock_admin
     response = client.post(
         "/inventory/", json={"reference": "Test Ref", "category": "craft", "size": "L"}
     )
@@ -202,24 +210,10 @@ def test_post_booking_not_logged_in():
     assert response.status_code == 401
 
 
-@pytest.mark.skip("RBAC not yet implemented")
-def test_post_booking_regular_user():
-    app.dependency_overrides[get_current_user] = mock_user
-    response = client.post("/bookings", json=booking_payload)
-    assert response.status_code == 401
-
-
 def test_put_booking_not_logged_in():
     app.dependency_overrides = {}
     response = client.put("/bookings/1", json=booking_payload)
     assert response.status_code == 403 or response.status_code == 401
-
-
-@pytest.mark.skip("RBAC not yet implemented")
-def test_put_booking_regular_user():
-    app.dependency_overrides[get_current_user] = mock_user
-    response = client.put("/bookings/1", json=booking_payload)
-    assert response.status_code == 401
 
 
 def test_user_cannot_delete_others_booking():
@@ -268,7 +262,6 @@ def test_owner_can_delete_own_booking():
     assert delete_resp.status_code == 200
 
 
-@pytest.mark.skip("RBAC not yet implemented")
 def test_admin_can_delete_any_booking():
     # Create booking as user
     app.dependency_overrides[get_current_user] = mock_user
@@ -289,7 +282,7 @@ def test_admin_can_delete_any_booking():
     # Delete as admin
     app.dependency_overrides[get_current_user] = mock_admin
     delete_resp = client.delete(f"/bookings/{booking_id}")
-    assert delete_resp.status_code == 204
+    assert delete_resp.status_code == 200
 
 
 def test_cannot_book_already_booked_item():

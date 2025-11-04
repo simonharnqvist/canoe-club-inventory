@@ -11,6 +11,7 @@ from typing import Optional
 class UserBase(SQLModel):
     username: str = Field(index=True)
     email: str = Field(index=True)
+    is_admin: bool = Field(default=False)
 
 
 class User(UserBase, table=True):
