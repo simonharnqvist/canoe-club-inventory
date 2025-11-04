@@ -175,39 +175,58 @@ def error_page(error_message: str):
     )
 
 
-def handle_login():
-    global username, password, token
-    # Send credentials to FastAPI /token endpoint
-    response = requests.post(
-        "http://localhost:8000/token", data={"username": username, "password": password}
-    )
-    if response.status_code == 200:
-        token = response.json().get("access_token")
-        print(f"Logged in successfully! Token: {token}")
-    else:
-        print("Login failed!")
+class LoginState(rx.State):
+    username: str = ""
+    password: str = ""
+    token: str = ""
+    error: str = ""
+    state_auto_setters = True
+
+    def handle_login(self):
+        try:
+            response = requests.post(
+                "http://localhost:8000/token",
+                data={"username": self.username, "password": self.password},
+            )
+            if response.status_code == 200:
+                self.token = response.json().get("access_token")
+                self.error = ""
+            else:
+                self.error = "Login failed!"
+        except Exception as e:
+            self.error = f"Error: {str(e)}"
 
 
 def login_page() -> rx.Component:
-    global username, password
-
-    def on_username_change(value):
-        nonlocal username
-        username = value
-
-    def on_password_change(value):
-        nonlocal password
-        password = value
-
     return rx.box(
-        children=[
+        rx.vstack(
             rx.text("Login to your account"),
-            rx.input(placeholder="Username", on_change=on_username_change),
             rx.input(
-                placeholder="Password", type="password", on_change=on_password_change
+                placeholder="Username",
+                on_change=LoginState.set_username,
+                value=LoginState.username,
             ),
-            rx.button("Login", on_click=handle_login),
-        ]
+            rx.input(
+                placeholder="Password",
+                type="password",
+                on_change=LoginState.set_password,
+                value=LoginState.password,
+            ),
+            rx.button("Login", on_click=LoginState.handle_login),
+            rx.text(LoginState.error, color="red"),
+            # Use rx.cond correctly
+            rx.cond(
+                lambda: bool(LoginState.token),  # Make the condition reactive
+                lambda: rx.text(f"Token: {LoginState.token}", color="green"),
+                lambda: rx.none(),  # Nothing rendered if no token
+            ),
+        ),
+        padding="2em",
+        border="1px solid #ccc",
+        border_radius="8px",
+        width="400px",
+        margin="auto",
+        margin_top="5em",
     )
 
 

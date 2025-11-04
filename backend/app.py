@@ -1,5 +1,5 @@
 from typing import Annotated
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pwdlib import PasswordHash
 from pydantic import BaseModel
@@ -9,8 +9,9 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, select
 import os
 from sqlmodel import SQLModel
+from typing import Optional
 
-from .models import (
+from models import (
     User,
     Inventory,
     Booking,
@@ -22,7 +23,7 @@ from .models import (
     BookingCreate,
     BookingRead,
 )
-from .database import engine, get_session
+from database import engine, get_session
 
 ENGINE = engine
 
@@ -50,7 +51,12 @@ def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    title="Canoe club inventory/bookings API",
+    description="API to manage bookings, inventory, and users for a canoe club or similar sports club.",
+    version="0.2.0",
+)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -118,8 +124,17 @@ def get_current_user(
     return user
 
 
-@app.post("/register", response_model=UserRead)
+@app.post(
+    "/register",
+    response_model=UserRead,
+    summary="Register new user",
+    response_description="User data",
+    tags=["Users"],
+)
 def register_user(user: UserCreate, session: Session = Depends(get_session)):
+    """
+    Register new user.
+    """
     existing_user = session.exec(
         select(User).where(User.username == user.username)
     ).first()
@@ -136,11 +151,14 @@ def register_user(user: UserCreate, session: Session = Depends(get_session)):
     return db_user
 
 
-@app.post("/token")
+@app.post(
+    "/token", summary="Log in", response_description="Bearer token", tags=["Users"]
+)
 def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: Session = Depends(get_session),
 ) -> Token:
+    """Obtain token for login"""
     user = authenticate_user(session, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -155,8 +173,15 @@ def login_for_access_token(
     return Token(access_token=access_token, token_type="bearer")
 
 
-@app.get("/users/me", response_model=UserRead)
+@app.get(
+    "/users/me",
+    response_model=UserRead,
+    summary="Get current user",
+    response_description="Current user data",
+    tags=["Users"],
+)
 def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+    """Get current user data."""
     return current_user
 
 
@@ -165,12 +190,16 @@ def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
     "/inventory",
     response_model=InventoryRead,
     dependencies=[Depends(get_current_user)],
+    summary="Add new item to inventory",
+    response_description="Item data",
+    tags=["Inventory"],
 )
 def create_item(
     item: InventoryCreate,
     session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
+    """Add new item to inventory. Admin access only."""
 
     is_admin(current_user)
     db_item = Inventory(**item.model_dump())
@@ -184,6 +213,9 @@ def create_item(
     "/inventory/{id}",
     response_model=InventoryRead,
     dependencies=[Depends(get_current_user)],
+    summary="Update item in inventory",
+    response_description="Updated item data",
+    tags=["Inventory"],
 )
 def update_item(
     id: int,
@@ -191,6 +223,10 @@ def update_item(
     session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
+    """
+    Update item in inventory by item_id. Admin access only.
+    - **item_id**: Unique ID of item.
+    """
     is_admin(current_user)
     item = session.get(Inventory, id)
     if not item:
@@ -202,12 +238,21 @@ def update_item(
     return item
 
 
-@app.delete("/inventory/{id}", dependencies=[Depends(get_current_user)])
+@app.delete(
+    "/inventory/{id}",
+    dependencies=[Depends(get_current_user)],
+    summary="Delete item in inventory",
+    tags=["Inventory"],
+)
 def delete_item(
     id: int,
     session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
+    """
+    Delete item in inventory by item_id. Admin access only
+    - **item_id**: Unique ID of item.
+    """
     is_admin(current_user)
     item = session.get(Inventory, id)
     if not item:
@@ -221,9 +266,51 @@ def delete_item(
     "/inventory",
     response_model=list[InventoryRead],
     dependencies=[Depends(get_current_user)],
+    summary="List items in inventory",
+    response_description="List of items",
+    tags=["Inventory"],
 )
-def list_items(session: Session = Depends(get_session)):
-    db_items = session.exec(select(Inventory)).all()
+def list_items(
+    session: Session = Depends(get_session),
+    reference: Optional[str] = Query(
+        None,
+        description="Filter by item reference",
+        min_length=1,
+        max_length=50,
+        example="Green mamba kayak",
+    ),
+    category: Optional[str] = Query(
+        None,
+        description="Filter by item category",
+        min_length=1,
+        max_length=50,
+        example="canoe",
+    ),
+    size: Optional[str] = Query(
+        None,
+        description="Filter by item size",
+        min_length=1,
+        max_length=10,
+        example="Large",
+    ),
+):
+    """
+    List all items in inventory with optional filtering by reference, category, or size.
+
+    - **reference**: Optional filter by item reference (partial match)
+    - **category**: Optional filter by item category (partial match)
+    - **size**: Optional filter by item size (partial match)
+    """
+    query = select(Inventory)
+
+    if reference:
+        query = query.where(Inventory.reference.contains(reference))
+    if category:
+        query = query.where(Inventory.category.contains(category))
+    if size:
+        query = query.where(Inventory.size.contains(size))
+
+    db_items = session.exec(query).all()
     return db_items
 
 
@@ -247,9 +334,19 @@ def check_if_item_available(
 
 # --- Booking Routes ---
 @app.post(
-    "/bookings", response_model=BookingRead, dependencies=[Depends(get_current_user)]
+    "/bookings",
+    response_model=BookingRead,
+    dependencies=[Depends(get_current_user)],
+    summary="Create new booking",
+    response_description="Booking data",
+    tags=["Bookings"],
 )
 def create_booking(booking: BookingCreate, session: Session = Depends(get_session)):
+    """Create new booking if item is available during requested time.
+    - **item_id**: Item requested
+    - **start_time**: Start time of booking (datetime)
+    - **end_time**: End time of booking (datetime)
+    """
     check_if_item_available(
         booking.item_id, booking.start_time, booking.end_time, session
     )
@@ -264,6 +361,9 @@ def create_booking(booking: BookingCreate, session: Session = Depends(get_sessio
     "/bookings/{id}",
     response_model=BookingRead,
     dependencies=[Depends(get_current_user)],
+    summary="Update existing booking",
+    response_description="Updated booking data",
+    tags=["Bookings"],
 )
 def update_booking(
     id: int,
@@ -271,6 +371,10 @@ def update_booking(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Update an existing booking with a new request body (to change booking time or item)
+    - **id**: Booking ID
+    """
     db_booking = session.get(Booking, id)
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -286,12 +390,21 @@ def update_booking(
     return db_booking
 
 
-@app.delete("/bookings/{id}", dependencies=[Depends(get_current_user)])
+@app.delete(
+    "/bookings/{id}",
+    dependencies=[Depends(get_current_user)],
+    summary="Delete booking",
+    tags=["Bookings"],
+)
 def delete_booking(
     id: int,
     session: Session = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
+    """
+    Cancel existing booking. Use /bookings/put to update instead.
+    -**id**: Booking ID.
+    """
     db_booking = session.get(Booking, id)
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -309,6 +422,37 @@ def delete_booking(
     "/bookings",
     response_model=list[BookingRead],
     dependencies=[Depends(get_current_user)],
+    summary="List all bookings",
+    response_description="List of bookings",
+    tags=["Bookings"],
 )
-def list_bookings(session: Session = Depends(get_session)):
-    return session.exec(select(Booking)).all()
+def list_bookings(
+    session: Session = Depends(get_session),
+    datetime_from: Optional[datetime] = Query(
+        datetime.now(), description="Select bookings from"
+    ),
+    datetime_until: Optional[datetime] = Query(
+        datetime.now(), description="Select bookings until"
+    ),
+    item_id: Optional[int] = Query(None, description="Item ID to check bookings for"),
+    user_id: Optional[int] = Query(None, description="Show only certain user"),
+):
+    """List all bookings with optional filter on start time/date, end time date, item, and user.
+    - **datetime_from**: Optional filter for earliest bookings to show
+    - **datetime_until**: Optional filter for latest bookings to show
+    - **item_id**: Optional filter for which item to show bookings for
+    - **user_id**: Optional filter for which user to show bookings for
+    """
+
+    query = select(Booking)
+
+    if datetime_from:
+        query = query.where(Booking.start_time >= datetime_from)
+    if datetime_until:
+        query = query.where(Booking.end_time <= datetime_until)
+    if item_id:
+        query = query.where(Booking.item_id == item_id)
+    if user_id:
+        query = query.where(Booking.user_id == user_id)
+
+    return session.exec(query).all()
